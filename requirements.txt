@@ -3,3 +3,6 @@ numpy==1.26.4
 pandas==2.2.2
 joblib==1.4.2
 streamlit==1.38.0
+h5py==3.12.1
+protobuf==5.28.3
+tensorflow==2.20.0

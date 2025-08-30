@@ -1,0 +1,9 @@
+{
+  "num_words": 5000,
+  "max_length": 100,
+  "labels": [
+    "Negative",
+    "Neutral",
+    "Positive"
+  ]
+}

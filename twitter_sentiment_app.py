@@ -1,43 +1,76 @@
+import os
+import re
+import json
+import numpy as np
 import streamlit as st
 import tensorflow as tf
-from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-# Load the saved model
-model = tf.keras.models.load_model('sentiment_model.h5')
+# -------- Paths (ensure these files exist) --------
+MODEL_PATH = "sentiment_model.keras"
+VOCAB_PATH = "tokenizer_word_index.json"
+CONFIG_PATH = "config.json"
 
-# Load the tokenizer
-tokenizer = Tokenizer(num_words=5000)  # You need to set the same value as used during training
+# -------- Load config & vocab --------
+if not (os.path.exists(MODEL_PATH) and os.path.exists(VOCAB_PATH) and os.path.exists(CONFIG_PATH)):
+    st.error("Missing one or more files: sentiment_model.keras, tokenizer_word_index.json, config.json")
+    st.stop()
 
-# Define the maximum sequence length (you should use the same value used during training)
-max_length = 100  # Adjust this value based on your training data
+with open(CONFIG_PATH) as f:
+    cfg = json.load(f)
+NUM_WORDS = int(cfg.get("num_words", 5000))
+MAX_LEN   = int(cfg.get("max_length", 100))
+LABELS    = cfg.get("labels", ["Negative", "Neutral", "Positive"])
 
-# Create a function to predict sentiment
-def predict_sentiment(text):
-    # Tokenize and pad the input text
-    sequences = tokenizer.texts_to_sequences([text])
-    padded = pad_sequences(sequences, maxlen=max_length, truncating='post')
+with open(VOCAB_PATH) as f:
+    WORD_INDEX = json.load(f)  # word -> index (1-based integers)
 
-    # Predict the sentiment
-    prediction = model.predict(padded)
+# -------- Robust model loader (Keras 3) --------
+def load_model_robust(path: str):
+    # safe_mode=False relaxes checks and avoids some deserialization/name-scope bugs
+    return tf.keras.models.load_model(path, compile=False, safe_mode=False)
 
-    return prediction
+model = load_model_robust(MODEL_PATH)
 
-# Set up Streamlit app
+# -------- Preprocessing (must match training) --------
+def preprocess_text(text: str) -> str:
+    text = str(text)
+    text = re.sub(r"[^a-zA-Z\s]", "", text).lower().strip()
+    return text
+
+def texts_to_sequences(texts, word_index, num_words=None):
+    seqs = []
+    for t in texts:
+        tokens = t.split()
+        indices = []
+        for tok in tokens:
+            idx = word_index.get(tok)
+            if idx is not None:
+                idx = int(idx)
+                if (num_words is None) or (idx < num_words):
+                    indices.append(idx)
+        seqs.append(indices)
+    return seqs
+
+def predict_sentiment(text: str):
+    clean = preprocess_text(text)
+    seq = texts_to_sequences([clean], WORD_INDEX, num_words=NUM_WORDS)
+    padded = pad_sequences(seq, maxlen=MAX_LEN, padding="post", truncating="pre")
+    probs = model.predict(padded, verbose=0)[0]
+    pred_idx = int(np.argmax(probs))
+    return LABELS[pred_idx], float(probs[pred_idx]), probs
+
+# -------- Streamlit UI --------
 st.title("Sentiment Analysis App")
-
-# Text input for user
 user_input = st.text_area("Enter your text:")
 
 if st.button("Predict"):
-    if user_input:
-        # Call the prediction function
-        prediction = predict_sentiment(user_input)
-
-        # Determine the sentiment based on the prediction
-        sentiment = ["Negative", "Neutral", "Positive"][prediction.argmax()]
-
-        # Display the result
-        st.write(f"Sentiment: {sentiment}")
-    else:
+    text = user_input.strip()
+    if not text:
         st.warning("Please enter some text for analysis.")
+    else:
+        label, conf, probs = predict_sentiment(text)
+        st.markdown(f"**Prediction:** {label}  \n**Confidence:** {conf:.3f}")
+        st.subheader("Class probabilities")
+        for i, p in enumerate(probs):
+            st.write(f"{LABELS[i]}: {p:.3f}")
